@@ -1,12 +1,776 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Platformer Game</title>
-  <link rel="stylesheet" href="style.css">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Platformer — 10 Levels</title>
+<style>
+  :root {
+    --ui-bg: rgba(10,10,10,0.7);
+    --ui-strong: rgba(255,255,255,0.95);
+    --accent: #ffcc33;
+  }
+  html,body { height:100%; margin:0; font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial; background:#0b1220; color:var(--ui-strong); }
+  #gameContainer { position:relative; width:100vw; height:100vh; overflow:hidden; }
+  canvas { display:block; width:100%; height:100%; background: linear-gradient(#7ec0ff 0%, #a9e0ff 60%, #85c9ff 100%); }
+  /* HUD */
+  .hud {
+    position:absolute; left:12px; top:12px; z-index:30; background:var(--ui-bg); padding:10px 12px; border-radius:8px;
+    box-shadow:0 6px 18px rgba(0,0,0,0.5); font-size:14px;
+  }
+  .hud .row { display:flex; gap:12px; align-items:center; }
+  .hud .label { opacity:0.9; font-weight:600; }
+  .hud .value { color:var(--accent); font-weight:700; }
+  /* Main menu / overlays */
+  .overlay {
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center; z-index:40;
+    background:linear-gradient(rgba(8,12,18,0.6), rgba(6,8,12,0.6));
+    backdrop-filter: blur(4px);
+  }
+  .menu {
+    width:min(920px,94%); max-width:920px; background:linear-gradient(180deg,#0f1724,#071029); border-radius:12px; padding:28px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+    border: 1px solid rgba(255,255,255,0.03);
+    color:var(--ui-strong);
+  }
+  .menu h1 { margin:0 0 6px 0; font-size:28px; letter-spacing:-0.5px; }
+  .menu p.lead { margin:0 0 18px 0; opacity:0.85; }
+  .btn { display:inline-block; background:var(--accent); color:#111; padding:10px 14px; border-radius:8px; font-weight:700; text-decoration:none; cursor:pointer; border:none; }
+  .btn.ghost { background:transparent; color:var(--ui-strong); border:1px solid rgba(255,255,255,0.06); }
+  .controls { display:flex; gap:8px; align-items:center; margin-top:12px; flex-wrap:wrap; }
+  .level-grid { display:grid; gap:8px; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); margin-top:14px; }
+  .level-card { padding:10px; border-radius:8px; background:linear-gradient(180deg,rgba(255,255,255,0.03),rgba(0,0,0,0.08)); display:flex; justify-content:space-between; align-items:center; gap:8px; font-weight:700; cursor:pointer; }
+  .level-card.locked { opacity:0.5; cursor:not-allowed; filter:grayscale(0.2); }
+  .tiny { font-size:12px; opacity:0.85; font-weight:600; }
+  /* Pause modal smaller */
+  .pause-sheet { width:360px; }
+  /* small helper */
+  .muted { opacity:0.8; font-size:13px; }
+  /* mobile hint */
+  .hint { position:absolute; right:12px; bottom:12px; z-index:25; background:var(--ui-bg); padding:8px 10px; border-radius:8px; font-size:13px; }
+  a { color:inherit; }
+</style>
 </head>
 <body>
-  <canvas id="gameCanvas" width="800" height="450"></canvas>
-  <script src="script.js"></script>
+<div id="gameContainer">
+  <canvas id="game"></canvas>
+
+  <!-- HUD -->
+  <div class="hud" id="hud">
+    <div class="row"><div class="label">Level</div><div class="value" id="hudLevel">1</div></div>
+    <div class="row" style="margin-top:8px;"><div class="label">Lives</div><div class="value" id="hudLives">3</div></div>
+    <div class="row" style="margin-top:8px;"><div class="label">Score</div><div class="value" id="hudScore">0</div></div>
+  </div>
+
+  <div class="hint">Controls: ←/A, →/D, ↑/W/Space = jump • P/Esc = Pause</div>
+
+  <!-- Main Menu Overlay -->
+  <div id="mainMenu" class="overlay" style="display:flex;">
+    <div class="menu">
+      <h1>Pixel Run — Platformer</h1>
+      <p class="lead">10 progressive levels • WASD + Arrow controls • Jump pads, lava, moving enemies, doors, pause menu, lives and level select. Unlock levels by finishing them.</p>
+
+      <div style="display:flex; gap:12px; align-items:center;">
+        <button class="btn" id="startBtn">Start Game</button>
+        <button class="btn ghost" id="openLevels">Level Select</button>
+        <button class="btn ghost" id="howBtn">How to Play</button>
+      </div>
+
+      <div style="margin-top:18px;">
+        <div class="tiny muted">Unlocked: <span id="unlockedText">1</span>/10</div>
+        <div style="margin-top:10px;" class="tiny muted">Lives reset to 3 each level. Finish the level by reaching the door. Touching lava or enemies costs a life.</div>
+      </div>
+
+      <div style="margin-top:18px;" class="muted tiny">Made for hosting on GitHub Pages — paste this entire file as <code>index.html</code>.</div>
+
+      <div id="levelsPanel" style="display:none; margin-top:18px;">
+        <h3 style="margin:6px 0 8px 0;">Level Select</h3>
+        <div class="level-grid" id="levelGrid"></div>
+        <div style="margin-top:12px;"><button class="btn ghost" id="closeLevels">Close</button></div>
+      </div>
+
+      <div id="howPanel" style="display:none; margin-top:14px;">
+        <h3 style="margin:6px 0 8px 0;">How to Play</h3>
+        <ul style="margin:0 0 10px 18px; line-height:1.5;">
+          <li>Move: ← / → or A / D</li>
+          <li>Jump: ↑ / W / Space</li>
+          <li>Pause: P or Esc</li>
+          <li>Reach the door to finish the level</li>
+          <li>Jump pads give a big bounce; lava kills</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pause Overlay (hidden) -->
+  <div id="pauseMenu" class="overlay" style="display:none;">
+    <div class="menu pause-sheet" style="text-align:center;">
+      <h2 style="margin:0 0 6px 0;">Paused</h2>
+      <div style="margin:8px 0 18px 0;" class="muted tiny">Level <span id="pauseLevel">1</span></div>
+      <div style="display:flex; gap:10px; justify-content:center; margin-bottom:8px;">
+        <button class="btn" id="resumeBtn">Resume</button>
+        <button class="btn ghost" id="restartBtn">Restart</button>
+      </div>
+      <div><button class="btn ghost" id="toMainBtn">Main Menu</button></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ------------------------------
+   PLATFORMER GAME (single-file)
+   - Save as index.html, upload to GitHub
+   - Controls: A/D or ←/→, W/Up/Space = jump, P/Esc = pause
+   ------------------------------ */
+
+// Canvas + retina scaling
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let DPR = Math.max(1, window.devicePixelRatio || 1);
+
+function resizeCanvas() {
+  canvas.width = Math.floor(window.innerWidth * DPR);
+  canvas.height = Math.floor(window.innerHeight * DPR);
+  canvas.style.width = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+/* ------------------------------
+   Input
+------------------------------ */
+const keys = {};
+window.addEventListener('keydown', (e) => {
+  keys[e.code] = true;
+  // prevent arrow keys from scrolling
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
+});
+window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+function isDown(codes) { return codes.some(c => !!keys[c]); }
+
+/* ------------------------------
+   Basic physics + player
+------------------------------ */
+const GRAV = 0.8;
+const FRICTION = 0.85;
+const MAX_FALL = 28;
+
+class Player {
+  constructor() {
+    this.width = 36;
+    this.height = 48;
+    this.reset();
+  }
+  reset() {
+    this.x = 100;
+    this.y = 100;
+    this.dx = 0;
+    this.dy = 0;
+    this.speed = 4.2;
+    this.jumping = false;
+    this.onGround = false;
+    this.respawnX = 100;
+    this.respawnY = 100;
+  }
+  draw(cam) {
+    ctx.fillStyle = '#ff6b6b';
+    ctx.fillRect(this.x - cam.x, this.y - cam.y, this.width, this.height);
+    // simple eye
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(this.x - cam.x + 8, this.y - cam.y + 12, 6, 6);
+  }
+}
+
+/* ------------------------------
+   Helper: AABB collision
+------------------------------ */
+function aabb(a, b) {
+  return (a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y);
+}
+
+/* ------------------------------
+   Level data
+   Each level: width, height, start, door, platforms[], lava[], jumpPads[], enemies[]
+------------------------------ */
+function makeLevel(width, height, startX, startY, platformList, lavaList, jumpPads, enemies, door) {
+  return { width, height, startX, startY, platforms: platformList, lava: lavaList, pads: jumpPads, enemies: enemies, door };
+}
+
+// A small set of utility factories for common objects
+const P = (x,y,w,h) => ({x,y,width:w,height:h});
+const L = (x,y,w,h) => ({x,y,width:w,height:h});
+const J = (x,y,w,h,power=18) => ({x,y,width:w,height:h,power});
+const E = (x,y,w,h,dx=1,range=120) => ({x,y,width:w,height:h,dx,range,baseX:x});
+
+// Levels: 10 progressive levels
+const levels = [
+  // Level 1 - tutorial: small platforms, door near
+  makeLevel(1200, 600, 80, 420,
+    [ P(0,560,1200,40), P(180,460,140,14), P(380,360,160,14), P(640,420,120,14) ],
+    [ L(520,560,200,20) ],
+    [ J(700,400,40,12,22) ],
+    [ E(480,520,24,24,1,120) ],
+    { x: 740, y: 360, width: 40, height: 60 }
+  ),
+  // Level 2 - introduce lava pits and jump pad placement
+  makeLevel(1400,600,80,420,
+    [ P(0,560,1400,40), P(220,460,120,14), P(380,320,100,14), P(560,420,120,14), P(800,340,140,14) ],
+    [ L(420,560,120,20), L(920,560,120,20) ],
+    [ J(620,380,48,12,26) ],
+    [ E(520,520,26,26,1.2,160) ],
+    { x: 850, y: 300, width:40, height:60 }
+  ),
+  // Level 3 - moving enemies with narrow platforms
+  makeLevel(1600,700,100,500,
+    [ P(0,660,1600,40), P(150,560,120,14), P(360,460,120,14), P(580,360,120,14), P(820,460,120,14), P(1080,380,160,14) ],
+    [ L(760,660,120,20) ],
+    [ J(620,340,40,12,28) ],
+    [ E(400,520,28,28,1.5,220), E(900,420,28,28,1.2,180) ],
+    { x: 1140, y: 320, width:44, height:60 }
+  ),
+  // Level 4 - platforming with gaps and jump pads
+  makeLevel(1800,700,120,500,
+    [ P(0,660,1800,40), P(220,560,120,14), P(520,480,140,14), P(760,420,120,14), P(980,360,120,14), P(1250,440,160,14) ],
+    [ L(420,660,160,20), L(1040,660,160,20) ],
+    [ J(540,430,40,12,30), J(1000,320,40,12,32) ],
+    [ E(600,520,26,26,1.4,180), E(1300,420,28,28,1.6,220) ],
+    { x: 1320, y: 380, width:44, height:60 }
+  ),
+  // Level 5 - small vertical area with platforms and more enemies
+  makeLevel(1200,900,100,760,
+    [ P(0,860,1200,40), P(80,760,140,14), P(260,640,120,14), P(440,520,120,14), P(620,400,120,14), P(820,280,200,14) ],
+    [ L(300,860,200,20) ],
+    [ J(360,600,44,12,34), J(700,360,44,12,36) ],
+    [ E(320,720,28,28,1.6,220), E(560,480,28,28,1.2,180) ],
+    { x: 950, y: 220, width:48, height:64 }
+  ),
+  // Level 6 - long horizontal with fast enemies + lava platforms
+  makeLevel(2400,700,80,520,
+    [ P(0,660,2400,40), P(240,520,140,14), P(520,460,140,14), P(840,520,140,14), P(1160,420,160,14), P(1500,500,180,14), P(1860,360,200,14) ],
+    [ L(680,660,180,20), L(1360,660,180,20), L(1720,660,200,20) ],
+    [ J(1180,380,40,12,36) ],
+    [ E(460,540,28,28,2.2,300), E(1560,480,28,28,1.8,260) ],
+    { x: 1900, y: 320, width:52, height:64 }
+  ),
+  // Level 7 - tricky bounce puzzles and narrow corridors
+  makeLevel(1800,900,100,760,
+    [ P(0,860,1800,40), P(140,760,120,14), P(300,700,100,14), P(420,620,120,14), P(620,520,120,14), P(980,420,140,14), P(1280,360,160,14) ],
+    [ L(520,860,240,20), L(980,860,220,20) ],
+    [ J(340,660,40,12,40), J(900,380,44,12,38), J(1240,320,44,12,46) ],
+    [ E(860,540,28,28,1.6,200), E(1130,480,28,28,1.4,160) ],
+    { x: 1400, y: 300, width:52, height:64 }
+  ),
+  // Level 8 - vertical shaft with platforms, many enemies
+  makeLevel(1200,1600,100,1400,
+    [ P(0,1560,1200,40), P(80,1380,160,14), P(300,1180,140,14), P(520,980,140,14), P(760,760,160,14), P(880,560,140,14), P(520,400,160,14) ],
+    [ L(320,1560,200,20), L(760,1560,200,20) ],
+    [ J(460,1160,44,12,40), J(820,720,44,12,48) ],
+    [ E(340,1360,26,26,1.8,240), E(600,940,28,28,1.4,200), E(900,520,28,28,1.6,200) ],
+    { x: 560, y: 340, width:56, height:70 }
+  ),
+  // Level 9 - gauntlet: many lava platforms, enemies
+  makeLevel(2200,700,80,520,
+    [ P(0,660,2200,40), P(180,520,120,14), P(420,460,120,14), P(700,420,140,14), P(980,370,120,14), P(1280,420,160,14), P(1620,500,220,14) ],
+    [ L(300,660,140,20), L(820,660,140,20), L(1120,660,160,20), L(1520,660,160,20) ],
+    [ J(720,380,44,12,44), J(1260,380,44,12,36) ],
+    [ E(520,520,28,28,2.4,360), E(980,320,28,28,2.0,260), E(1460,520,28,28,1.6,220) ],
+    { x: 1700, y: 440, width:52, height:64 }
+  ),
+  // Level 10 - final: complex with many mechanics combined
+  makeLevel(3000,900,120,760,
+    [ P(0,860,3000,40), P(200,760,160,14), P(420,680,140,14), P(640,580,120,14), P(920,520,140,14), P(1200,460,140,14), P(1520,420,160,14), P(1860,520,160,14), P(2160,420,180,14), P(2480,320,200,14) ],
+    [ L(720,860,200,20), L(1480,860,200,20), L(2040,860,200,20) ],
+    [ J(840,560,48,12,48), J(1440,380,48,12,50), J(2320,260,48,12,58) ],
+    [ E(520,720,28,28,2.2,300), E(1280,500,28,28,1.8,260), E(1880,460,28,28,1.9,280), E(2320,300,28,28,2.3,320) ],
+    { x: 2560, y: 260, width:64, height:80 }
+  )
+];
+
+/* ------------------------------
+   Game State
+------------------------------ */
+let state = {
+  currentLevel: 0,
+  player: new Player(),
+  cam: {x:0,y:0, w: window.innerWidth, h: window.innerHeight},
+  score: 0,
+  lives: 3,
+  paused: false,
+  running: false,
+  unlocked: 1, // 1..10
+};
+
+const STORAGE_KEY = 'pixelrun_unlocked_v1';
+function loadUnlocked() {
+  const v = parseInt(localStorage.getItem(STORAGE_KEY) || '1', 10);
+  state.unlocked = Math.min(Math.max(1, v), levels.length);
+}
+function saveUnlocked() {
+  localStorage.setItem(STORAGE_KEY, String(state.unlocked));
+}
+loadUnlocked();
+
+/* ------------------------------
+   UI elements
+------------------------------ */
+const mainMenu = document.getElementById('mainMenu');
+const pauseMenu = document.getElementById('pauseMenu');
+const startBtn = document.getElementById('startBtn');
+const openLevels = document.getElementById('openLevels');
+const closeLevels = document.getElementById('closeLevels');
+const howBtn = document.getElementById('howBtn');
+const levelsPanel = document.getElementById('levelsPanel');
+const howPanel = document.getElementById('howPanel');
+const levelGrid = document.getElementById('levelGrid');
+const unlockedText = document.getElementById('unlockedText');
+const hudLevel = document.getElementById('hudLevel');
+const hudLives = document.getElementById('hudLives');
+const hudScore = document.getElementById('hudScore');
+const pauseLevel = document.getElementById('pauseLevel');
+
+const resumeBtn = document.getElementById('resumeBtn');
+const restartBtn = document.getElementById('restartBtn');
+const toMainBtn = document.getElementById('toMainBtn');
+
+/* Populate level select */
+function refreshLevelGrid() {
+  levelGrid.innerHTML = '';
+  for (let i=0;i<levels.length;i++){
+    const idx = i+1;
+    const div = document.createElement('div');
+    div.className = 'level-card' + (idx > state.unlocked ? ' locked' : '');
+    div.innerHTML = `<div>Level ${idx}</div><div class="tiny">${idx===state.unlocked ? 'Unlocked' : (idx < state.unlocked ? 'Cleared' : 'Locked')}</div>`;
+    (function(levelIndex){
+      div.addEventListener('click', ()=>{
+        if(levelIndex+1 > state.unlocked) return;
+        startLevel(levelIndex);
+        hideMainMenu();
+      });
+    })(i);
+    levelGrid.appendChild(div);
+  }
+  unlockedText.textContent = String(state.unlocked);
+}
+refreshLevelGrid();
+
+/* Menu button handlers */
+startBtn.onclick = ()=> { startLevel(0); hideMainMenu(); };
+openLevels.onclick = ()=> { levelsPanel.style.display='block'; howPanel.style.display='none'; refreshLevelGrid(); };
+closeLevels.onclick = ()=> { levelsPanel.style.display='none'; };
+howBtn.onclick = ()=> { howPanel.style.display = howPanel.style.display==='block' ? 'none' : 'block'; levelsPanel.style.display='none'; };
+
+/* Pause handlers */
+resumeBtn.onclick = () => { togglePause(false); };
+restartBtn.onclick = () => { restartLevel(); togglePause(false); };
+toMainBtn.onclick = () => { gotoMainMenu(); };
+
+/* Toggle menus */
+function hideMainMenu() { mainMenu.style.display='none'; state.running = true; state.paused = false; }
+function showMainMenu() { mainMenu.style.display='flex'; state.running = false; state.paused = true; refreshLevelGrid(); }
+function showPauseMenu() { pauseMenu.style.display='flex'; pauseLevel.textContent = String(state.currentLevel+1); }
+function hidePauseMenu() { pauseMenu.style.display='none'; }
+
+/* ------------------------------
+   Level management
+------------------------------ */
+function startLevel(index) {
+  if (index < 0 || index >= levels.length) index = 0;
+  state.currentLevel = index;
+  const L = levels[index];
+  state.player = new Player();
+  state.player.x = L.startX;
+  state.player.y = L.startY;
+  state.player.respawnX = L.startX;
+  state.player.respawnY = L.startY;
+  state.cam.x = 0; state.cam.y = 0;
+  state.score = 0;
+  state.lives = 3;
+  initLevelState(index);
+  hudLevel.textContent = String(index+1);
+  hudLives.textContent = String(state.lives);
+  hudScore.textContent = String(state.score);
+  state.running = true;
+  state.paused = false;
+  hidePauseMenu();
+}
+function restartLevel() {
+  // reset dynamic objects for the level
+  initLevelState(state.currentLevel);
+  state.player.x = levels[state.currentLevel].startX;
+  state.player.y = levels[state.currentLevel].startY;
+  state.player.dx = 0; state.player.dy = 0;
+  state.lives = 3;
+  state.score = 0;
+  hudLives.textContent = String(state.lives);
+  hudScore.textContent = String(state.score);
+  hudLevel.textContent = String(state.currentLevel+1);
+}
+
+/* Per-level dynamic state (for enemies, coins, etc) */
+let levelState = null;
+function initLevelState(index) {
+  const L = levels[index];
+  // clone enemies to have their own position/state
+  levelState = {
+    enemies: L.enemies.map(e => ({...e, x: e.baseX, dir: Math.sign(e.dx)||1})),
+    pads: L.pads.map(p => ({...p})),
+    coins: [], // not using coins now, but can be added
+    finished: false
+  };
+}
+
+/* ------------------------------
+   Game update / physics / collisions
+------------------------------ */
+
+// Simple platform collision resolution using previous position
+function applyPhysics(dt) {
+  const p = state.player;
+  // INPUT
+  let left = isDown(['ArrowLeft','KeyA']);
+  let right = isDown(['ArrowRight','KeyD']);
+  let jump = isDown(['ArrowUp','KeyW','Space']);
+
+  // horizontal acceleration
+  if (left) p.dx = -p.speed;
+  else if (right) p.dx = p.speed;
+  else p.dx *= FRICTION;
+
+  // Jumping: allow coyote time & small grace? we'll use simple onGround check
+  if (jump && !p.jumping && p.onGround) {
+    p.dy = -15.5;
+    p.jumping = true;
+    p.onGround = false;
+  }
+
+  // Apply gravity
+  p.dy += GRAV;
+  if (p.dy > MAX_FALL) p.dy = MAX_FALL;
+
+  // Proposed move
+  let nextX = p.x + p.dx;
+  let nextY = p.y + p.dy;
+
+  // Move X and resolve horizontal collisions with platforms (simple)
+  p.x = nextX;
+  resolveHorizontalCollisions(p);
+
+  // Move Y and resolve vertical collisions
+  p.y = nextY;
+  resolveVerticalCollisions(p);
+
+  // Keep inside level bounds
+  const L = levels[state.currentLevel];
+  if (p.x < 0) p.x = 0;
+  if (p.x + p.width > L.width) p.x = L.width - p.width;
+  if (p.y > L.height + 200) {
+    // Fell out of world - treat as death
+    killPlayer();
+  }
+}
+
+function resolveHorizontalCollisions(player) {
+  const L = levels[state.currentLevel];
+  for (const plat of L.platforms) {
+    // Only check if overlapping vertically
+    if (player.y < plat.y + plat.height && player.y + player.height > plat.y) {
+      if (player.x < plat.x + plat.width && player.x + player.width > plat.x) {
+        // collision happened horizontally
+        if (player.dx > 0) {
+          player.x = plat.x - player.width;
+          player.dx = 0;
+        } else if (player.dx < 0) {
+          player.x = plat.x + plat.width;
+          player.dx = 0;
+        }
+      }
+    }
+  }
+}
+
+function resolveVerticalCollisions(player) {
+  const L = levels[state.currentLevel];
+  player.onGround = false;
+  for (const plat of L.platforms) {
+    if (player.x < plat.x + plat.width && player.x + player.width > plat.x) {
+      if (player.y < plat.y + plat.height && player.y + player.height > plat.y) {
+        // collision vertical
+        const prevBottom = player.y - player.dy + player.height;
+        if (player.dy > 0 && (player.y + player.height) >= plat.y && prevBottom <= plat.y + 1) {
+          // landed on top
+          player.y = plat.y - player.height;
+          player.dy = 0;
+          player.jumping = false;
+          player.onGround = true;
+        } else if (player.dy < 0 && (player.y) <= plat.y + plat.height && (player.y - player.dy) >= plat.y + plat.height - 1) {
+          // hit from below
+          player.y = plat.y + plat.height;
+          player.dy = 0;
+        }
+      }
+    }
+  }
+}
+
+/* ------------------------------
+   Level interactions: lava, pads, enemies, door
+------------------------------ */
+
+function advanceToNextLevel() {
+  const next = Math.min(levels.length-1, state.currentLevel + 1);
+  if (state.currentLevel < levels.length-1) {
+    state.unlocked = Math.max(state.unlocked, next+1);
+    saveUnlocked();
+  }
+  // small celebration (score bonus) and then start next level
+  setTimeout(()=> {
+    startLevel(next);
+  }, 500);
+}
+
+function killPlayer() {
+  state.lives -= 1;
+  if (state.lives > 0) {
+    // respawn at start
+    state.player.x = levels[state.currentLevel].startX;
+    state.player.y = levels[state.currentLevel].startY;
+    state.player.dx = 0; state.player.dy = 0;
+  } else {
+    // lives are zero -> reset level progress for this level (but keep unlocks)
+    // reset lives and reset level dynamic state
+    initLevelState(state.currentLevel);
+    state.lives = 3;
+    state.score = Math.max(0, state.score - 50); // small penalty
+    state.player.x = levels[state.currentLevel].startX;
+    state.player.y = levels[state.currentLevel].startY;
+    state.player.dx = 0; state.player.dy = 0;
+  }
+  hudLives.textContent = String(state.lives);
+  hudScore.textContent = String(state.score);
+}
+
+/* Update enemies and check all interactions */
+function updateInteractions(dt) {
+  const L = levels[state.currentLevel];
+  const p = state.player;
+
+  // Jump pads
+  for (const pad of L.pads) {
+    const area = {x: pad.x, y: pad.y, width: pad.width, height: pad.height};
+    if (aabb({...p, width:p.width, height:p.height}, area)) {
+      // Apply upward impulse
+      p.dy = -pad.power;
+      p.jumping = true;
+      p.onGround = false;
+    }
+  }
+
+  // Lava hazards - immediate death
+  for (const lava of L.lava) {
+    if (aabb({...p, width:p.width, height:p.height}, lava)) {
+      // fall into lava - lose life and respawn
+      killPlayer();
+      return;
+    }
+  }
+
+  // Enemies: move and check collision
+  for (const en of levelState.enemies) {
+    // Move horizontally within range
+    en.x += en.dir * Math.abs(en.dx);
+    const dist = en.x - en.baseX;
+    if (Math.abs(dist) >= en.range/2) en.dir *= -1;
+    // Check collision with player
+    const enemyBox = {x: en.x, y: en.y, width: en.width, height: en.height};
+    if (aabb({...p, width:p.width, height:p.height}, enemyBox)) {
+      // Touching enemy: die
+      killPlayer();
+      return;
+    }
+  }
+
+  // Door
+  const door = L.door;
+  if (aabb({...p, width:p.width, height:p.height}, door)) {
+    // level finished
+    state.score += 200;
+    hudScore.textContent = String(state.score);
+    // unlock next level & advance
+    advanceToNextLevel();
+  }
+}
+
+/* ------------------------------
+   Camera
+------------------------------ */
+function updateCamera() {
+  const L = levels[state.currentLevel];
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const p = state.player;
+
+  // Center camera on player but clamp to level boundaries
+  let targetX = p.x + p.width/2 - vw/2;
+  let targetY = p.y + p.height/2 - vh/2;
+  targetX = Math.max(0, Math.min(targetX, L.width - vw));
+  targetY = Math.max(0, Math.min(targetY, L.height - vh));
+  // Smooth camera
+  state.cam.x += (targetX - state.cam.x) * 0.15;
+  state.cam.y += (targetY - state.cam.y) * 0.12;
+}
+
+/* ------------------------------
+   Rendering
+------------------------------ */
+function draw() {
+  // clear
+  ctx.clearRect(0,0,canvas.width/DPR,canvas.height/DPR);
+
+  // background gradient / parallax (simple)
+  const skyH = Math.min(1, (state.player.y / (levels[state.currentLevel].height || 1000)));
+  // draw ground / distant shapes
+  // Draw platforms
+  const cam = state.cam;
+  const L = levels[state.currentLevel];
+
+  // Background parallax rectangles for depth
+  ctx.fillStyle = '#a3d8ff';
+  ctx.fillRect(-cam.x*0.2, 0 - cam.y*0.05, L.width, canvas.height/DPR + 200);
+
+  // Draw lava areas
+  for (const lava of L.lava) {
+    ctx.fillStyle = '#ff5a5a';
+    ctx.fillRect(lava.x - cam.x, lava.y - cam.y, lava.width, lava.height);
+    // lava wave
+    ctx.fillStyle = 'rgba(0,0,0,0.08)';
+    for (let i=0;i<lava.width;i+=12) {
+      ctx.fillRect(lava.x - cam.x + i, lava.y - cam.y + (Math.sin((lava.x+i+performance.now()/60)/30)*4 + 6), 8, 3);
+    }
+  }
+
+  // Platforms
+  ctx.fillStyle = '#2c8b3a';
+  for (const plat of L.platforms) {
+    ctx.fillRect(plat.x - cam.x, plat.y - cam.y, plat.width, plat.height);
+    // top line
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(plat.x - cam.x, plat.y - cam.y, plat.width, 2);
+    ctx.fillStyle = '#2c8b3a';
+  }
+
+  // Jump pads
+  for (const pad of L.pads) {
+    ctx.fillStyle = '#ffd84a';
+    ctx.fillRect(pad.x - cam.x, pad.y - cam.y, pad.width, pad.height);
+    ctx.fillStyle = '#c59b26';
+    ctx.fillRect(pad.x - cam.x + 6, pad.y - cam.y + 2, pad.width-12, pad.height-4);
+  }
+
+  // Door
+  const door = L.door;
+  ctx.fillStyle = '#3b82f6';
+  ctx.fillRect(door.x - cam.x, door.y - cam.y, door.width, door.height);
+  // door window
+  ctx.fillStyle = '#7dd3fc';
+  ctx.fillRect(door.x - cam.x + 8, door.y - cam.y + 8, Math.max(8, door.width-16), Math.max(8, door.height-16));
+
+  // Enemies
+  for (const en of levelState.enemies) {
+    ctx.fillStyle = '#7f1d1d';
+    ctx.fillRect(en.x - cam.x, en.y - cam.y, en.width, en.height);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(en.x - cam.x + 4, en.y - cam.y + 4, Math.max(4,en.width-8), Math.max(4,en.height-8));
+  }
+
+  // Player
+  state.player.draw(cam);
+
+  // HUD drawn via DOM, so no need to draw text here
+}
+
+/* ------------------------------
+   Game loop
+------------------------------ */
+let lastTime = performance.now();
+function gameLoop(t) {
+  const dt = (t - lastTime) / 1000;
+  lastTime = t;
+
+  // Pause toggle (P or Escape)
+  if (isDown(['KeyP']) || isDown(['Escape'])) {
+    // debounced: only trigger once per keydown - implement simple edge detection
+    if (!state._pauseKeyDown) {
+      togglePause(!state.paused);
+      state._pauseKeyDown = true;
+    }
+  } else state._pauseKeyDown = false;
+
+  if (state.running && !state.paused) {
+    applyPhysics(dt);
+    updateInteractions(dt);
+    updateCamera();
+  }
+
+  draw();
+
+  // Update HUD each frame
+  hudLevel.textContent = String(state.currentLevel+1);
+  hudLives.textContent = String(state.lives);
+  hudScore.textContent = String(state.score);
+
+  requestAnimationFrame(gameLoop);
+}
+
+/* ------------------------------
+   Pause / resume
+------------------------------ */
+function togglePause(on) {
+  state.paused = on;
+  if (on) {
+    state.running = false;
+    showPauseMenu();
+  } else {
+    state.running = true;
+    hidePauseMenu();
+  }
+}
+
+/* ------------------------------
+   Start the engine
+------------------------------ */
+function boot() {
+  // Show main menu initially
+  showMainMenu();
+  requestAnimationFrame(gameLoop);
+}
+boot();
+
+/* ------------------------------
+   Touch / mobile: optional simple buttons (not requested)
+------------------------------ */
+
+/* ------------------------------
+   Setup initial level state if user starts directly
+------------------------------ */
+initLevelState(0);
+
+/* ------------------------------
+   Misc: unlock progression visible in menu
+------------------------------ */
+function gotoMainMenu() {
+  showMainMenu();
+  refreshLevelGrid();
+  state.running = false;
+}
+window.gotoMainMenu = gotoMainMenu;
+
+/* Ensure localStorage unlocked display updated on load */
+document.addEventListener('visibilitychange', ()=> loadUnlocked());
+
+</script>
 </body>
 </html>
